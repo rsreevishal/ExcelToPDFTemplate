@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Label Generator</title>
+    <!-- Load xlsx library for reading Excel files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+    <!-- Load jsPDF library for exporting to PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        label {
+            margin-top: 10px;
+        }
+
+        .form-container {
+            max-width: 500px;
+            margin: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="form-container">
+        <h1>Label Generator</h1>
+        <form id="labelForm">
+            <!-- Canvas size input -->
+            <label for="canvasSize">Select Canvas Size:</label>
+            <select id="canvasSize" name="canvasSize">
+                <option value="A4">A4</option>
+                <option value="A3">A3</option>
+                <option value="custom">Custom</option>
+            </select>
+
+            <br>
+
+            <!-- Custom canvas size input -->
+            <label for="customWidth">Custom Canvas Width (mm):</label>
+            <input type="number" id="customWidth" name="customWidth" placeholder="Width in mm" disabled>
+
+            <br>
+
+            <label for="customHeight">Custom Canvas Height (mm):</label>
+            <input type="number" id="customHeight" name="customHeight" placeholder="Height in mm" disabled>
+
+            <br>
+
+            <!-- Label size input -->
+            <label for="labelWidth">Label Width (mm):</label>
+            <input type="number" id="labelWidth" name="labelWidth" required>
+
+            <br>
+
+            <label for="labelHeight">Label Height (mm):</label>
+            <input type="number" id="labelHeight" name="labelHeight" required>
+
+            <br>
+
+            <!-- File input for Excel -->
+            <label for="excelFile">Upload Excel File:</label>
+            <input type="file" id="excelFile" name="excelFile" accept=".xlsx, .xls" required>
+
+            <br><br>
+            <label for="htmlTemplate">HTML Template</label>
+            <textarea id="htmlTemplate" rows="10" cols="50"></textarea>
+            <br><br>
+            <div id="htmlTemplateBlock"></div>
+            <button id="viewTemplate" type="button">View template</button>
+            
+            <!-- Submit Button -->
+            <button type="submit">Generate Labels</button>
+        </form>
+        <br>
+
+        <!-- Canvas Preview -->
+        <div id="canvasPreview"></div>
+        <br><br>
+
+        <!-- Export to PDF Button -->
+        <button id="exportBtn" style="display:none;">Export to PDF</button>
+    </div>
+
+    <script>
+        // Wait for jsPDF library to be loaded
+        function renderHTML() {
+            const htmlCode = document.getElementById("htmlTemplate").value;
+            const templateBlock = document.getElementById("htmlTemplateBlock");
+            const temp = document.createElement('div');
+            temp.innerHTML = htmlCode;
+            templateBlock.appendChild(temp);
+            html2canvas(temp).then((canvas) => {
+                const labelWidth = parseInt(document.getElementById('labelWidth').value);
+                const labelHeight = parseInt(document.getElementById('labelHeight').value);
+                canvas.style.width = `${labelWidth * 3.8}px`;
+                canvas.style.height = `${labelHeight * 3.8}px`;
+            });
+        }
+
+        async function renderHTML2(json) {
+            changeTextInput(json);
+            const templateBlock = document.getElementById("htmlTemplateBlock");
+            const canvas = await html2canvas(templateBlock.firstChild);
+            const labelWidth = parseInt(document.getElementById('labelWidth').value);
+            const labelHeight = parseInt(document.getElementById('labelHeight').value);
+            canvas.style.width = `${labelWidth * 3.8}px`;
+            canvas.style.height = `${labelHeight * 3.8}px`;
+            return canvas;
+        }
+
+        function getCanvasSize() {
+            const canvasSize = document.getElementById('canvasSize').value;
+            let width, height;
+
+            if (canvasSize === 'A4') {
+                width = 210; // A4 width in mm
+                height = 297; // A4 height in mm
+            } else if (canvasSize === 'A3') {
+                width = 297; // A3 width in mm
+                height = 420; // A3 height in mm
+            } else { // Custom size
+                width = parseInt(document.getElementById('customWidth').value);
+                height = parseInt(document.getElementById('customHeight').value);
+            }
+            return { width, height };
+        }
+
+        function changeTextInput(json) {
+            Object.keys(json).forEach((k) => {
+                const inpt = document.getElementById(`text_${k}`);
+                if(inpt) inpt.innerHTML = json[k];
+            });
+        }
+        window.onload = function () {
+            if (typeof jspdf.jsPDF === "undefined") {
+                console.error("jsPDF library is not loaded.");
+            } else {
+                document.getElementById('viewTemplate').addEventListener('click', function (e) {
+                    renderHTML();
+                });
+                // Handle form submission
+                document.getElementById('labelForm').addEventListener('submit', function (e) {
+                    e.preventDefault();
+                    generateLabels();
+                });
+
+                // Handle custom canvas size visibility
+                document.getElementById('canvasSize').addEventListener('change', function () {
+                    if (this.value === 'custom') {
+                        document.getElementById('customWidth').disabled = false;
+                        document.getElementById('customHeight').disabled = false;
+                    } else {
+                        document.getElementById('customWidth').disabled = true;
+                        document.getElementById('customHeight').disabled = true;
+                    }
+                });
+
+                function createCanvas(id) {
+                    var canvas = document.createElement("canvas");
+                    canvas.id = "canvas_" + id;
+                    canvas.style.border = "1px solid #000";
+                    var canvasPreview = document.getElementById('canvasPreview');
+                    canvasPreview.appendChild(canvas);
+                    return canvas;
+                }
+
+                async function generateLabels() {
+                    const { width, height } = getCanvasSize();
+                    const labelWidth = parseInt(document.getElementById('labelWidth').value);
+                    const labelHeight = parseInt(document.getElementById('labelHeight').value);
+
+                    const fileInput = document.getElementById('excelFile');
+                    const reader = new FileReader();
+
+                    reader.onload = async function (e) {
+                        const data = e.target.result;
+                        const workbook = XLSX.read(data, { type: 'binary' });
+                        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                        const json = XLSX.utils.sheet_to_json(worksheet);
+
+                        // Calculate the number of labels per page
+                        const labelsPerRow = Math.floor(width / labelWidth);
+                        const labelsPerColumn = Math.floor(height / labelHeight);
+                        document.getElementById('canvasPreview').innerHTML = '';
+                        let canvasId = 0;
+                        let canvas = createCanvas(canvasId);
+                        let ctx = canvas.getContext('2d');
+
+                        // Set canvas size (in px)
+                        canvas.width = width * 3.8; // Convert mm to px (approximately)
+                        canvas.height = height * 3.8;
+
+                        // Clear canvas before drawing
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                        let xPos = 0, yPos = 0, labelCount = 0;
+                        for(const item of json) {
+                            const labelX = xPos * labelWidth * 3.8; // Convert to px
+                            const labelY = yPos * labelHeight * 3.8; // Convert to px
+                            const labelCanvas = await renderHTML2(item);
+                            ctx.drawImage(labelCanvas, labelX, labelY, labelWidth * 3.8, labelHeight * 3.8);
+                            // Update x and y position for the next label
+                            xPos++;
+                            if (xPos >= labelsPerRow) {
+                                xPos = 0;
+                                yPos++;
+                            }
+
+                            labelCount++;
+
+                            // Check if we need to create a new page
+                            if (labelCount % (labelsPerRow * labelsPerColumn) === 0) {
+                                canvasId += 1;
+                                canvas = createCanvas(canvasId);
+                                ctx = canvas.getContext('2d');
+
+                                // Set canvas size (in px)
+                                canvas.width = width * 3.8; // Convert mm to px (approximately)
+                                canvas.height = height * 3.8;
+
+                                // Clear canvas before drawing
+                                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                xPos = 0; // Reset x position
+                                yPos = 0; // Reset y position
+                            }
+                        }
+
+                        document.getElementById('exportBtn').style.display = 'inline-block';
+                    };
+
+                    reader.readAsBinaryString(fileInput.files[0]);
+                }
+
+                // Export canvas to PDF
+                document.getElementById('exportBtn').addEventListener('click', function () {
+                    const { width, height } = getCanvasSize();
+                    const pdf = new jspdf.jsPDF({
+                        unit: 'mm',
+                        format: [width, height]
+                    });
+
+                    // Convert canvas to image
+                    const canvasPreview = document.getElementById('canvasPreview');
+                    canvasPreview.childNodes.forEach((canvas) => {
+                        const imgData = canvas.toDataURL('image/png');
+                        // Add image to PDF
+                        pdf.addImage(imgData, 'PNG', 0, 0, width, height);
+                        pdf.addPage([width, height]);
+                    })
+                    // Save PDF
+                    pdf.save('labels.pdf');
+                });
+            }
+        };
+    </script>
+</body>
+
+</html>
