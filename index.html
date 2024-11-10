@@ -84,7 +84,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.7.0/dist/html-to-image.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.1/xlsx.full.min.js"></script>
 </head>
 
 <body>
@@ -120,12 +119,19 @@
 
             <label for="labelHeight">Label Height (mm):</label>
             <input type="number" id="labelHeight" name="labelHeight" required>
+
+            <label for="paddingSize">Padding (px):</label>
+            <input type="number" id="paddingSize" name="paddingSize" required>
         </div>
 
         <div class="tab-content" id="tab2">
             <label for="excelFile">Upload Excel File:</label>
             <input type="file" id="excelFile" name="excelFile" accept=".xlsx, .xls" required>
             <button id="viewExcel" type="button">View File</button>
+            <input type="text" id="searchInput" placeholder="Search for rows..." onkeyup="searchTable()">
+            <label for="selectAllCheckbox">All</label>
+            <input type="checkbox" id="selectAllCheckbox" onclick="selectAllRows()">
+
             <div id="excelViewer"></div>
         </div>
 
@@ -225,14 +231,74 @@
                 const workbook = XLSX.read(data, { type: 'binary' });
                 const worksheet = workbook.Sheets[workbook.SheetNames[0]];
                 const html = XLSX.utils.sheet_to_html(worksheet);
-                document.getElementById('excelViewer').innerHTML = html;
+                const viewer = document.getElementById('excelViewer');
+                viewer.innerHTML = html;
+                const table = viewer.querySelector('table');
+                table.id = 'excelTable';
+                addCheckboxesToRows();
             };
             reader.readAsBinaryString(fileInput.files[0]);
+        }
+        function searchTable() {
+            let input = document.getElementById("searchInput").value.toUpperCase();
+            let table = document.getElementById("excelTable");
+            let rows = table.getElementsByTagName("tr");
+
+            for (let i = 1; i < rows.length; i++) { // skip the header row
+                let cells = rows[i].getElementsByTagName("td");
+                let rowContainsSearch = Array.from(cells).some(cell => cell.textContent.toUpperCase().includes(input));
+                rows[i].style.display = rowContainsSearch ? "" : "none";
+            }
+        }
+        function selectAllRows() {
+            let selectAllCheckbox = document.getElementById("selectAllCheckbox");
+            let checkboxes = document.querySelectorAll("#excelTable input[type='checkbox']");
+            checkboxes.forEach(checkbox => checkbox.checked = selectAllCheckbox.checked);
+        }
+
+        function addCheckboxesToRows() {
+            let table = document.getElementById("excelTable");
+            let rows = table.getElementsByTagName("tr");
+
+            for (let i = 1; i < rows.length; i++) { // skip the header row
+                let cell = rows[i].insertCell();
+                cell.innerHTML = '<input type="checkbox" onclick="toggleRowSelection(this)">';
+            }
+        }
+
+        function toggleRowSelection(rowCheckbox) {
+            if (!rowCheckbox.checked) {
+                document.getElementById("selectAllCheckbox").checked = false;
+            }
+        }
+
+        function getSelectedRowIndexes() {
+            let selectedIndexes = [];
+            let table = document.getElementById("excelTable");
+            let rows = table.getElementsByTagName("tr");
+
+            for (let i = 1; i < rows.length; i++) { // skip the header row
+                let checkbox = rows[i].getElementsByTagName("input")[0];
+                if (checkbox && checkbox.checked) {
+                    selectedIndexes.push(i - 1); // Adjusting for header row
+                }
+            }
+
+            return selectedIndexes;
         }
         window.onload = function () {
             if (typeof jspdf.jsPDF === "undefined") {
                 console.error("jsPDF library is not loaded.");
             } else {
+                populateFields({
+                    "canvasSize": "A4",
+                    "customWidth": null,
+                    "customHeight": null,
+                    "labelWidth": "68",
+                    "labelHeight": "30",
+                    "htmlTemplate": "<div\n    style=\"border: 3px solid black; padding: 5px; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;\">\n    <!-- Left Side -->\n    <div style=\"width: 70%; text-align: left;\">\n        <p style=\"font-size: 30px; margin: 0; font-weight: bold;\" id=\"text_name\">Boost</p>\n        <p style=\"font-size: 27px; margin: 0;\" id=\"text_unit\">1 kg</p>\n        <p style=\"font-size: 28px; margin: 0;\">MRP - ₹<span id=\"text_mrp\"\n                style=\"text-decoration: line-through;\">600</span></p>\n        <p style=\"font-size: 32px; margin: 0; text-decoration: underline;\">SALES PRICE:\n            ₹<span id=\"text_price\">550</span>\n        </p>\n    </div>\n\n    <!-- Right Side -->\n    <div style=\"width: 30%; text-align: right;\">\n        <p style=\"font-size: 35px; margin: 0; font-weight: bold;\">Save</p>\n        <p style=\"font-size: 68px; margin: 0; font-weight: bold\" id=\"text_save\">50</p>\n    </div>\n</div>",
+                    "paddingSize": "10"
+                });
                 document.getElementById('viewTemplate').addEventListener('click', function (e) {
                     renderHTML();
                 });
@@ -267,6 +333,7 @@
                 }
 
                 async function generateLabels() {
+                    const PADDING_SIZE = parseInt(document.getElementById('paddingSize').value);
                     const { width, height } = getCanvasSize();
                     const labelWidth = parseInt(document.getElementById('labelWidth').value);
                     const labelHeight = parseInt(document.getElementById('labelHeight').value);
@@ -279,8 +346,6 @@
                         const workbook = XLSX.read(data, { type: 'binary' });
                         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
                         const json = XLSX.utils.sheet_to_json(worksheet);
-                        const html = XLSX.utils.sheet_to_html(worksheet);
-                        document.getElementById('excelViewer').innerHTML = html;
 
                         // Calculate the number of labels per page
                         const labelsPerRow = Math.floor(width / labelWidth);
@@ -298,9 +363,15 @@
                         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
                         let xPos = 0, yPos = 0, labelCount = 0;
+                        let itemIndex = 0;
+                        const selectedItems = getSelectedRowIndexes();
                         for (const item of json) {
-                            const labelX = xPos * labelWidth * 3.8; // Convert to px
-                            const labelY = yPos * labelHeight * 3.8; // Convert to px
+                            if (!selectedItems.includes(itemIndex)) {
+                                itemIndex += 1;
+                                continue;
+                            }
+                            const labelX = xPos * (labelWidth * 3.8 + PADDING_SIZE); // Convert to px
+                            const labelY = yPos * (labelHeight * 3.8 + PADDING_SIZE); // Convert to px
                             const labelCanvas = await renderHTML3(item);
                             ctx.drawImage(labelCanvas, labelX, labelY, labelWidth * 3.8, labelHeight * 3.8);
                             // Update x and y position for the next label
@@ -327,6 +398,7 @@
                                 xPos = 0; // Reset x position
                                 yPos = 0; // Reset y position
                             }
+                            itemIndex += 1;
                         }
 
                         document.getElementById('exportBtn').style.display = 'inline-block';
@@ -366,6 +438,7 @@
             const labelWidth = document.getElementById('labelWidth').value;
             const labelHeight = document.getElementById('labelHeight').value;
             const htmlTemplate = document.getElementById('htmlTemplate').value;
+            const paddingSize = document.getElementById('paddingSize').value;
 
             const exportData = {
                 canvasSize,
@@ -373,7 +446,8 @@
                 customHeight: canvasSize === 'custom' ? customHeight : null,
                 labelWidth,
                 labelHeight,
-                htmlTemplate
+                htmlTemplate,
+                paddingSize
             };
 
             const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
@@ -418,6 +492,9 @@
             if (data.htmlTemplate) {
                 document.getElementById('htmlTemplate').value = data.htmlTemplate;
                 renderHTML();
+            }
+            if (data.paddingSize) {
+                document.getElementById('paddingSize').value = data.paddingSize;
             }
         }
     </script>
